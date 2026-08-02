@@ -1,6 +1,9 @@
 create extension if not exists "pgcrypto";
 
-create type lead_status as enum ('new','qualified','email_ready','approved','sent','replied','held','rejected');
+do $$ begin
+  create type lead_status as enum ('new','qualified','email_ready','approved','sent','replied','held','rejected');
+exception when duplicate_object then null;
+end $$;
 
 create table if not exists companies (
   id uuid primary key default gen_random_uuid(),
@@ -20,6 +23,10 @@ create table if not exists companies (
   updated_at timestamptz not null default now()
 );
 
+create unique index if not exists companies_website_unique on companies ((lower(website))) where website is not null;
+create index if not exists companies_status_idx on companies(status);
+create index if not exists companies_score_idx on companies(score desc);
+
 create table if not exists contacts (
   id uuid primary key default gen_random_uuid(),
   company_id uuid not null references companies(id) on delete cascade,
@@ -33,6 +40,7 @@ create table if not exists contacts (
   is_selected boolean not null default false,
   created_at timestamptz not null default now()
 );
+create index if not exists contacts_company_idx on contacts(company_id);
 
 create table if not exists email_drafts (
   id uuid primary key default gen_random_uuid(),
@@ -47,6 +55,7 @@ create table if not exists email_drafts (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+create index if not exists drafts_company_idx on email_drafts(company_id);
 
 create table if not exists suppression_list (
   id uuid primary key default gen_random_uuid(),
@@ -61,7 +70,15 @@ alter table contacts enable row level security;
 alter table email_drafts enable row level security;
 alter table suppression_list enable row level security;
 
-create policy "Authenticated users manage companies" on companies for all to authenticated using (true) with check (true);
-create policy "Authenticated users manage contacts" on contacts for all to authenticated using (true) with check (true);
-create policy "Authenticated users manage drafts" on email_drafts for all to authenticated using (true) with check (true);
-create policy "Authenticated users manage suppressions" on suppression_list for all to authenticated using (true) with check (true);
+do $$ begin
+  create policy "Authenticated users manage companies" on companies for all to authenticated using (true) with check (true);
+exception when duplicate_object then null; end $$;
+do $$ begin
+  create policy "Authenticated users manage contacts" on contacts for all to authenticated using (true) with check (true);
+exception when duplicate_object then null; end $$;
+do $$ begin
+  create policy "Authenticated users manage drafts" on email_drafts for all to authenticated using (true) with check (true);
+exception when duplicate_object then null; end $$;
+do $$ begin
+  create policy "Authenticated users manage suppressions" on suppression_list for all to authenticated using (true) with check (true);
+exception when duplicate_object then null; end $$;

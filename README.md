@@ -1,227 +1,127 @@
-# Symbio AI Sales Agent — Complete GitHub Package
+# Symbio AI Sales Agent — Verified Company Discovery
 
-A human-approved wholesale telecom prospecting application for Symbio. It runs as a static web app on Netlify with server-side Netlify Functions.
+This is the complete replacement package for the existing Netlify app.
 
-## Included workflows
+The lead-discovery pipeline now:
 
-1. **Real lead discovery** using Tavily.
-2. **AI qualification** using OpenAI.
-3. **Persistent storage** using Supabase.
-4. **Decision-maker discovery** using Apollo.
-5. **Personalised email generation** using OpenAI.
-6. **Human approval** before sending.
-7. **Outlook draft creation** using Microsoft Graph.
-8. **Optional direct sending**, disabled until explicitly enabled.
+1. Searches public web pages with Tavily.
+2. Uses OpenAI to identify the real company mentioned in those pages.
+3. Rejects article titles, reports, directories, job boards and generic pages.
+4. Runs a second verification search for each candidate.
+5. Confirms an official corporate website.
+6. Saves only verified organisations with a score of 65 or higher.
+7. Opens every company in a detailed review drawer.
+8. Allows incorrect records to be deleted individually or all at once.
 
-The target products include:
+## Upload to GitHub
 
-- AU/NZ/SG virtual numbers and DIDs
-- Call termination and wholesale voice
-- Australian mobile numbers
-- A2P and two-way SMS
-- MVNO enablement
-- eSIM and IoT SIMs
-- DIA, NBN, OptiComm, IP transit, backhaul and dark fibre
-- NuWave BYOC
-
-## 1. Upload to GitHub
-
-Upload the **contents of this folder** to the root of your existing GitHub repository. Replace the old files when prompted.
-
-Netlify should deploy automatically. There is no build command and no `npm install` step.
+Upload **all files inside this folder** to the root of the existing GitHub repository and replace the old files.
 
 Netlify settings:
 
-- Build command: leave blank
+- Build command: blank
 - Publish directory: `.`
 - Functions directory: `netlify/functions`
 
-## 2. Supabase
+After GitHub finishes uploading, use Netlify → Deploys → Trigger deploy → **Clear cache and deploy site**.
 
-Open Supabase → SQL Editor and run:
+## Required Netlify environment variables
 
-```text
-supabase/schema.sql
-```
-
-It is safe to run again. The schema creates:
-
-- `companies`
-- `contacts`
-- `email_drafts`
-- `suppression_list`
-
-Add these Netlify environment variables:
+Real verified-company discovery requires all of these:
 
 ```text
+TAVILY_API_KEY
+OPENAI_API_KEY
+OPENAI_MODEL=gpt-5-mini
 SUPABASE_URL
 SUPABASE_SECRET_KEY
 ```
 
-For an older project, use `SUPABASE_SERVICE_ROLE_KEY` instead of `SUPABASE_SECRET_KEY`.
+Older Supabase projects can use `SUPABASE_SERVICE_ROLE_KEY` instead of `SUPABASE_SECRET_KEY`.
 
-Never place the secret/service-role key in `app.js` or GitHub.
+The OpenAI key is now required for discovery because the earlier keyword fallback was what allowed article titles to be treated as companies.
 
-## 3. Tavily
-
-Add:
-
-```text
-TAVILY_API_KEY
-```
-
-This enables **Find real leads**.
-
-## 4. OpenAI
-
-Add:
-
-```text
-OPENAI_API_KEY
-OPENAI_MODEL=gpt-5-mini
-```
-
-OpenAI is used to qualify search results and generate company-specific outreach. If it is missing, discovery falls back to conservative keyword scoring, but email generation will not work.
-
-## 5. Apollo
-
-Add:
+Optional later integrations:
 
 ```text
 APOLLO_API_KEY
-```
-
-The key must support:
-
-- People API Search
-- People Enrichment
-
-The app searches for roles including CEO, Managing Director, GM, COO, CFO, Commercial Manager, Vendor Relationship Manager, Carrier Relations, Interconnect, Wholesale, Product, IoT, Network, Infrastructure, Procurement and Partnerships.
-
-Apollo may charge credits for enrichment and may not reveal every email address.
-
-## 6. Optional app access gate
-
-Because the Netlify URL can call paid APIs, set a private application token:
-
-```text
-APP_ACCESS_TOKEN=a-long-random-value
-```
-
-Then open the app → **Settings** and enter the same value. It is stored only in that browser session.
-
-This is a lightweight gate, not a replacement for full corporate SSO. Do not publish the site URL widely.
-
-## 7. Microsoft 365 / Outlook
-
-Outlook integration requires an Azure/Entra app registration and Symbio administrator approval.
-
-Add:
-
-```text
 MICROSOFT_TENANT_ID
 MICROSOFT_CLIENT_ID
 MICROSOFT_CLIENT_SECRET
-MICROSOFT_SENDER_EMAIL=your.symbio.email@symbio.global
+MICROSOFT_SENDER_EMAIL
 ALLOW_DIRECT_SEND=false
+APP_ACCESS_TOKEN
 ```
 
-Application permissions typically required:
+Never commit secret values to GitHub.
 
-- `Mail.ReadWrite` for creating drafts
-- `Mail.Send` for direct sending
-- Administrator consent
+## Remove the old incorrect leads
 
-Keep:
+After deploying:
+
+1. Open the app.
+2. Go to **Settings**.
+3. Click **Delete all existing leads**.
+4. Confirm the warning.
+5. Return to **Lead Discovery**.
+6. Run a fresh campaign.
+
+This deletes the earlier imported article-title records from Supabase and the browser.
+
+## What a correct result looks like
+
+A row should show an actual organisation such as:
 
 ```text
-ALLOW_DIRECT_SEND=false
+Airalo
+airalo.com
+Singapore
+Travel eSIM / mobile connectivity opportunity
+Open →
 ```
 
-until Symbio IT/security explicitly approves direct sending. With it set to false, the app can create an Outlook draft but cannot send directly.
-
-To activate direct send later:
+It should not show a headline such as:
 
 ```text
-ALLOW_DIRECT_SEND=true
+Travel's a breeze with unlimited data eSIMs
 ```
 
-The backend also checks that the lead is marked **approved** before sending when Supabase is connected.
+## Opening a company
 
-## 8. Redeploy after environment changes
+Click anywhere on the company row or click **Open →**. The company drawer contains:
 
-In Netlify:
+- Official website
+- Country and industry
+- Symbio opportunity
+- Relevant products
+- Buying signal
+- Research summary
+- Public evidence link
+- Contact discovery
+- Personalised email drafting
+- Hold, reject, approve and delete controls
 
-1. Deploys
-2. Trigger deploy
-3. Clear cache and deploy site
+## Supabase
 
-Then open the app → Settings → Refresh status.
+The included `supabase/schema.sql` is the same compatible schema. It is safe to run again, but it is not necessary when the existing tables were already created successfully.
 
-## Recommended first test
+## First test
 
-1. Confirm Tavily, OpenAI and Supabase show **Connected**.
-2. Open Lead Discovery.
-3. Select **Voice, DIDs & termination**.
+1. Confirm Tavily, OpenAI and Supabase show **Connected** in Settings.
+2. Delete all old leads once.
+3. Select **MVNO, eSIM & IoT SIMs**.
 4. Click **Find real leads**.
-5. Review the source and research for every result.
-6. Open one suitable company.
-7. Click **Find contacts** after Apollo is configured.
-8. Select a relevant contact.
-9. Click **Generate email**.
-10. Edit the message yourself.
-11. Click **Approve**.
-12. Use **Outlook draft** first.
+5. The first search may take longer because each candidate is verified separately.
+6. Open each saved company and inspect its official website and evidence before outreach.
 
-## Important safeguards
+## Cost and quality controls
 
-- This system finds possible prospects, not confirmed buyers.
-- Review the public source before contacting anyone.
-- Do not contact existing customers, protected accounts or another salesperson's accounts without checking your CRM.
-- Retain the source and business relevance for unsolicited B2B outreach.
-- Respect Australian, New Zealand, Singaporean and recipient-country marketing laws.
-- Maintain suppression/unsubscribe records.
-- Never upload API keys to GitHub.
-- Do not enable direct sending until authorised by Symbio.
+- The app searches five focused queries per campaign.
+- It verifies a limited number of candidate companies.
+- It saves a maximum of five verified companies per run.
+- It does not save a company without an official website.
+- It does not use a non-AI fallback for company identification.
 
-## Troubleshooting
+## Important
 
-### “Invalid app access token”
-
-Enter the value of `APP_ACCESS_TOKEN` in Settings. If you do not want the gate, remove that environment variable and redeploy.
-
-### Tavily works but no leads appear
-
-Try another campaign. The OpenAI qualification rules intentionally reject weak or generic results.
-
-### Apollo finds people but no email
-
-Apollo search does not always expose an email. The plan must include enrichment credits, and some people have no verified address in Apollo.
-
-### Supabase error about a missing enum or table
-
-Run `supabase/schema.sql` again in the SQL Editor.
-
-### Microsoft Graph access denied
-
-Confirm the Entra app has the correct **application** permissions, admin consent, and mailbox access. Keep direct sending disabled while this is being resolved.
-
-## File structure
-
-```text
-index.html
-styles.css
-app.js
-netlify.toml
-.env.example
-supabase/schema.sql
-netlify/functions/
-  _shared.mjs
-  health.mjs
-  list-leads.mjs
-  discover-leads.mjs
-  enrich-contact.mjs
-  generate-email.mjs
-  update-lead.mjs
-  send-approved-email.mjs
-```
+These are possible prospects, not confirmed buyers. Check Symbio CRM ownership, existing customer status, public evidence and applicable outreach rules before contacting anyone.
