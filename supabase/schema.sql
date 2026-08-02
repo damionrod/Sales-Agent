@@ -82,3 +82,27 @@ exception when duplicate_object then null; end $$;
 do $$ begin
   create policy "Authenticated users manage suppressions" on suppression_list for all to authenticated using (true) with check (true);
 exception when duplicate_object then null; end $$;
+
+-- Background lead discovery jobs
+create table if not exists search_jobs (
+  id uuid primary key default gen_random_uuid(),
+  campaign text not null default 'voice',
+  status text not null default 'queued' check (status in ('queued','running','completed','failed')),
+  stage text not null default 'Waiting to start',
+  progress integer not null default 0 check (progress between 0 and 100),
+  maximum_leads integer not null default 3,
+  results_per_query integer not null default 3,
+  searched_results integer not null default 0,
+  candidate_companies integer not null default 0,
+  qualified_leads integer not null default 0,
+  error text,
+  result_summary jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  completed_at timestamptz
+);
+create index if not exists search_jobs_created_idx on search_jobs(created_at desc);
+alter table search_jobs enable row level security;
+do $$ begin
+  create policy "Authenticated users manage search jobs" on search_jobs for all to authenticated using (true) with check (true);
+exception when duplicate_object then null; end $$;

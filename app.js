@@ -1,5 +1,6 @@
 const STORAGE_KEY='sasa-company-verified-v2';
 const TOKEN_KEY='sasa-access-token';
+const JOB_KEY='sasa-active-search-job';
 const navItems=[['dashboard','▦','Dashboard'],['leads','⌕','Lead Discovery'],['contacts','♙','Contacts'],['emails','✉','Approval Queue'],['settings','⚙','Settings']];
 const demo=[{id:'demo-1',company:'Example Communications',website:'https://example.com',country:'Global',industry:'Demo prospect',employees:'Unknown',opportunity:'AU/NZ/SG DIDs and call termination',products:['Virtual Numbers / DIDs','Call Termination'],signal:'This is sample data. Use Find real leads to replace it.',research:'The app is ready for live discovery once Tavily is configured.',score:78,status:'new',sourceUrl:'https://example.com',contacts:[],selectedContactId:null,subject:'',emailBody:'',createdAt:new Date().toISOString()}];
 let state={view:'dashboard',leads:loadLocal(),query:'',country:'All',selectedLeadId:null,campaign:'voice',busy:'',message:'',health:null,token:sessionStorage.getItem(TOKEN_KEY)||''};
@@ -35,7 +36,29 @@ function renderDrawer(){const root=document.getElementById('drawer-root'),l=stat
 }
 async function checkHealth(){try{state.health=await api('health',{method:'GET'});const all=state.health.integrations;document.getElementById('mode-pill').innerHTML=`<span class="live-dot"></span> ${all.tavily&&all.openai?'Live AI connected':'Setup incomplete'}`;}catch(e){state.health={integrations:{}};document.getElementById('mode-pill').textContent='Access required';}}
 async function sync(){setBusy('Syncing from Supabase');try{const d=await api('list-leads',{method:'GET'});if(d.configured&&d.leads.length){state.leads=d.leads;saveLocal();toast(`Loaded ${d.leads.length} lead(s) from Supabase.`)}else toast('Supabase is empty or not configured.','error')}catch(e){toast(e.message,'error')}finally{clearBusy()}}
-async function discover(){setBusy('discover');state.message='Searching public sources and qualifying companies…';render();try{const d=await api('discover-leads',{method:'POST',body:JSON.stringify({campaign:state.campaign,maximumLeads:5,resultsPerQuery:5})});const map=new Map(state.leads.filter(x=>!String(x.id).startsWith('demo-')).map(x=>[x.id,x]));d.leads.forEach(x=>map.set(x.id,x));state.leads=[...d.leads,...[...map.values()].filter(x=>!d.leads.some(y=>y.id===x.id))];saveLocal();state.message=`Checked ${d.searchedResults} pages, identified ${d.candidateCompanies||0} candidate companies and saved ${d.qualifiedLeads} verified lead(s).`;toast('Lead search completed.')}catch(e){state.message=e.message;toast(e.message,'error')}finally{state.busy='';render()}}
+async function pollSearchJob(jobId){
+ localStorage.setItem(JOB_KEY,jobId);state.busy='discover';
+ for(let attempt=0;attempt<180;attempt++){
+  try{
+   const d=await api(`get-search-job?id=${encodeURIComponent(jobId)}`,{method:'GET'});const j=d.job;
+   state.message=`${j.stage||'Working'} · ${j.progress||0}%${j.searched_results?` · ${j.searched_results} pages`:''}${j.candidate_companies?` · ${j.candidate_companies} candidates`:''}`;render();
+   if(j.status==='completed'){
+    localStorage.removeItem(JOB_KEY);state.busy='';await sync();state.view='leads';state.message=`Search complete: checked ${j.searched_results||0} pages, found ${j.candidate_companies||0} candidate companies and saved ${j.qualified_leads||0} verified lead(s).`;render();toast('Background lead search completed.');return;
+   }
+   if(j.status==='failed')throw new Error(j.error||'Background search failed.');
+  }catch(e){localStorage.removeItem(JOB_KEY);state.busy='';state.message=e.message;render();toast(e.message,'error');return}
+  await new Promise(r=>setTimeout(r,4000));
+ }
+ localStorage.removeItem(JOB_KEY);state.busy='';state.message='The search is still running. Refresh the page later and use Sync Supabase.';render();
+}
+async function discover(){
+ if(state.busy)return;setBusy('discover');state.message='Creating background search job…';render();
+ try{
+  const d=await api('discover-leads',{method:'POST',body:JSON.stringify({campaign:state.campaign,maximumLeads:3,resultsPerQuery:3})});
+  await fetch('/.netlify/functions/discover-leads-background',{method:'POST',headers:headers(),body:JSON.stringify({jobId:d.jobId})});
+  state.message='Search started. You can leave this page while it continues.';render();pollSearchJob(d.jobId);
+ }catch(e){state.busy='';state.message=e.message;render();toast(e.message,'error')}
+}
 async function deleteLead(l){if(!confirm(`Delete ${l.company} from the lead database?`))return;try{await api('delete-lead',{method:'POST',body:JSON.stringify({id:l.id})});state.leads=state.leads.filter(x=>x.id!==l.id);state.selectedLeadId=null;saveLocal();render();toast('Lead deleted.')}catch(e){toast(e.message,'error')}}
 async function resetAll(){if(!confirm('Delete ALL existing leads, contacts and drafts? Use this to remove the earlier incorrect article-title records.'))return;try{await api('reset-leads',{method:'POST',body:'{}'});state.leads=[];localStorage.removeItem(STORAGE_KEY);render();toast('All existing leads were removed. Run a fresh search.')}catch(e){toast(e.message,'error')}}
 async function findContacts(l){setBusy('Finding decision-makers with Apollo');renderDrawer();try{const d=await api('enrich-contact',{method:'POST',body:JSON.stringify({...l,maximumContacts:3})});l.contacts=d.contacts||[];l.selectedContactId=l.contacts[0]?.id||null;saveLocal();toast(d.message||'Contacts updated.')}catch(e){toast(e.message,'error')}finally{state.busy='';render();state.selectedLeadId=l.id;renderDrawer()}}
@@ -59,4 +82,4 @@ function bind(){
   const ra=document.getElementById('reset-all');if(ra)ra.onclick=resetAll
 }
 function render(){renderNav();const titles={dashboard:'Sales intelligence dashboard',leads:'Lead discovery',contacts:'Decision-maker contacts',emails:'Email approval queue',settings:'Integration settings'};document.getElementById('page-title').textContent=titles[state.view];document.getElementById('app').innerHTML=state.view==='dashboard'?dashboard():state.view==='leads'?leadsPage():state.view==='contacts'?contactsPage():state.view==='emails'?leadsPage(true):settingsPage();bind();renderDrawer()}
-(async()=>{render();await checkHealth();render();if(state.health?.integrations?.supabase)await sync()})();
+(async()=>{render();await checkHealth();render();if(state.health?.integrations?.supabase)await sync();const activeJob=localStorage.getItem(JOB_KEY);if(activeJob)pollSearchJob(activeJob)})();
