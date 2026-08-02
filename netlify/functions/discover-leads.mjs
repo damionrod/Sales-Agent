@@ -1,111 +1,302 @@
-import { corsJson, requirePost, checkAccess, cleanUrl, domainFromUrl, openAIJson, supabaseConfig, supabaseRequest, mapCompanyRow } from './_shared.mjs';
+import {
+  corsJson, requirePost, checkAccess, cleanUrl, domainFromUrl,
+  openAIJson, supabaseConfig, supabaseRequest, mapCompanyRow
+} from './_shared.mjs';
 
 const CAMPAIGNS = {
-  voice: { label: 'Voice, DIDs and termination', queries: [
-    'cloud communications company expanding into Australia local phone numbers voice',
-    'virtual number provider launching New Zealand coverage telecom',
-    'CPaaS provider expanding into Singapore local numbers voice',
-    'contact centre platform APAC expansion carrier partnership',
-    'wholesale voice provider entering Australia New Zealand Singapore'
-  ]},
-  mobile: { label: 'MVNO, eSIM and IoT SIMs', queries: [
-    'company launching MVNO Australia partnership',
-    'eSIM platform expanding into Australia New Zealand',
-    'IoT connected device company Australia cellular connectivity expansion',
-    'fleet telematics company launching connected devices Australia',
-    'retailer considering branded mobile service Australia'
-  ]},
-  data: { label: 'DIA, NBN, backhaul and dark fibre', queries: [
-    'Australian company opening new data centre network expansion',
-    'New Zealand managed service provider expanding network infrastructure',
-    'Australia enterprise requiring dark fibre backhaul data centre expansion',
-    'Australian ISP network expansion IP transit backhaul',
-    'business opening multiple Australian sites dedicated internet connectivity'
-  ]},
-  nuwave: { label: 'NuWave BYOC', queries: [
-    'NuWave BYOC contact centre company',
-    'NuWave BYOC APAC voice provider',
-    'cloud contact centre expanding Australia New Zealand Singapore BYOC',
-    'enterprise voice platform APAC carrier connectivity NuWave',
-    'Microsoft Teams voice provider APAC NuWave BYOC'
-  ]},
-  sms: { label: 'A2P and two-way SMS', queries: [
-    'software platform launching SMS notifications Australia New Zealand',
-    'government workflow SMS provider New Zealand integration',
-    'fintech expanding transactional messaging Australia',
-    'customer engagement platform entering Australia SMS',
-    'two way SMS platform APAC expansion'
-  ]}
+  voice: {
+    label: 'Voice, DIDs and termination',
+    queries: [
+      'company expanding cloud communications services into Australia local phone numbers',
+      'telecom software company launching New Zealand virtual numbers voice services',
+      'CPaaS company expanding into Singapore local numbers voice',
+      'contact centre platform APAC expansion carrier partnership',
+      'business phone provider entering Australia New Zealand Singapore'
+    ]
+  },
+  mobile: {
+    label: 'MVNO, eSIM and IoT SIMs',
+    queries: [
+      'company launching MVNO in Australia partnership',
+      'eSIM company expanding into Australia New Zealand',
+      'IoT platform company launching cellular connected devices Australia',
+      'fleet telematics company expanding Australia cellular connectivity',
+      'retailer launching branded mobile service Australia'
+    ]
+  },
+  data: {
+    label: 'DIA, NBN, backhaul and dark fibre',
+    queries: [
+      'company opening Australian data centre network expansion',
+      'managed service provider expanding infrastructure Australia New Zealand',
+      'cloud provider Australia dark fibre backhaul expansion',
+      'Australian ISP network expansion IP transit backhaul',
+      'enterprise opening multiple Australian sites dedicated internet'
+    ]
+  },
+  nuwave: {
+    label: 'NuWave BYOC',
+    queries: [
+      'company using NuWave BYOC APAC',
+      'cloud contact centre company expanding Australia New Zealand Singapore BYOC',
+      'Microsoft Teams voice provider APAC carrier connectivity',
+      'UCaaS provider launching APAC voice services',
+      'contact centre platform seeking local carrier Australia'
+    ]
+  },
+  sms: {
+    label: 'A2P and two-way SMS',
+    queries: [
+      'software company launching SMS notifications Australia New Zealand',
+      'workflow platform expanding transactional SMS New Zealand',
+      'fintech company expanding customer messaging Australia',
+      'customer engagement platform entering Australia SMS',
+      'two way SMS software company APAC expansion'
+    ]
+  }
 };
 
-function titleToCompany(title = '', url = '') {
-  const clean = title.replace(/\s+[|–—-]\s+.*$/, '').replace(/\b(press release|news|blog|careers?)\b/gi, '').trim();
-  if (clean.length >= 2 && clean.length <= 100) return clean;
-  return (domainFromUrl(url).split('.')[0] || 'Unknown company').replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+const BLOCKED_HOSTS = [
+  'linkedin.com', 'facebook.com', 'youtube.com', 'wikipedia.org', 'reddit.com',
+  'medium.com', 'substack.com', 'prnewswire.com', 'businesswire.com', 'globenewswire.com',
+  'news.google.com', 'techcrunch.com', 'forbes.com', 'reuters.com', 'bloomberg.com',
+  'statista.com', 'researchandmarkets.com', 'marketsandmarkets.com', 'indeed.com',
+  'seek.com.au', 'glassdoor.com', 'crunchbase.com'
+];
+
+function isBlockedHost(url = '') {
+  const host = domainFromUrl(url);
+  return BLOCKED_HOSTS.some(x => host === x || host.endsWith(`.${x}`));
 }
-function guessCountry(text='') {
-  const t = text.toLowerCase();
-  if (t.includes('new zealand')) return 'New Zealand';
-  if (t.includes('singapore')) return 'Singapore';
-  if (t.includes('australia')) return 'Australia';
-  if (t.includes('united kingdom') || /\buk\b/.test(t)) return 'United Kingdom';
-  if (t.includes('united states') || /\busa\b/.test(t)) return 'United States';
-  return 'Global';
-}
-function heuristic(item, campaignKey) {
-  const text = `${item.title || ''} ${item.content || ''}`;
-  const l = text.toLowerCase(); const products=[];
-  if (/did|virtual number|local number|phone number/.test(l)) products.push('Virtual Numbers / DIDs');
-  if (/termination|voice|calling|sip|telephony/.test(l)) products.push('Call Termination');
-  if (/sms|messaging/.test(l)) products.push('A2P / Two-way SMS');
-  if (/mvno|mobile service/.test(l)) products.push('MVNO Enablement');
-  if (/esim/.test(l)) products.push('eSIMs');
-  if (/iot|connected device|telematics/.test(l)) products.push('IoT SIMs');
-  if (/dark fibre|dark fiber/.test(l)) products.push('Dark Fibre');
-  if (/backhaul/.test(l)) products.push('Backhaul');
-  if (/ip transit/.test(l)) products.push('IP Transit');
-  if (/dedicated internet|\bdia\b|enterprise ethernet|\bnbn\b/.test(l)) products.push('DIA / NBN');
-  if (/nuwave|byoc/.test(l)) products.push('NuWave BYOC');
-  const defaults={voice:['Virtual Numbers / DIDs','Call Termination'],mobile:['eSIMs','IoT SIMs'],data:['DIA / NBN','Backhaul'],nuwave:['NuWave BYOC'],sms:['A2P / Two-way SMS']};
-  if (!products.length) products.push(...defaults[campaignKey]);
-  const signalHits=['launch','expand','expansion','new market','partnership','growth','opening','hiring'].filter(w=>l.includes(w)).length;
-  const score=Math.min(86,55+products.length*5+signalHits*4);
-  return { company:titleToCompany(item.title,item.url), website:cleanUrl(item.url), country:guessCountry(text), industry:'Potential wholesale telecommunications prospect', employees:'Unknown', opportunity:products.join(', '), products:[...new Set(products)], signal:(item.content||item.title||'').slice(0,500), research:`Public web evidence suggests a possible ${products.join(' and ')} opportunity. Review the source before contacting the company.`, score, status:score>=65?'qualified':'new', sourceUrl:cleanUrl(item.url), contacts:[], selectedContactId:null, subject:'', emailBody:'', createdAt:new Date().toISOString() };
-}
-async function tavilySearch(query,maxResults){
-  const key=process.env.TAVILY_API_KEY; if(!key) throw new Error('TAVILY_API_KEY is not configured.');
-  const r=await fetch('https://api.tavily.com/search',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({api_key:key,query,search_depth:'basic',max_results:maxResults,include_answer:false,include_raw_content:false,topic:'general'})});
-  const text=await r.text(); if(!r.ok) throw new Error(`Tavily ${r.status}: ${text.slice(0,600)}`);
-  const data=JSON.parse(text); return Array.isArray(data.results)?data.results:[];
-}
-async function aiQualify(items,label){
-  const compact=items.map((x,i)=>({index:i,title:x.title,url:x.url,content:(x.content||'').slice(0,1400)}));
-  const out=await openAIJson({schemaName:'lead qualification',system:`You are a conservative B2B telecom lead analyst for Symbio Wholesale. Campaign: ${label}. Only accept identifiable companies with a credible buying signal in supplied evidence. Never invent facts. Reject generic articles, directories, job boards, government pages, and companies that are merely competitors without a potential buyer requirement. Relevant capabilities: AU/NZ/SG DIDs, call termination, Australian mobile numbers, A2P/two-way SMS, MVNO enablement, eSIM, IoT SIM, DIA, NBN, OptiComm, IP transit, backhaul, dark fibre and NuWave BYOC. Return JSON only: {"leads":[...]}. Scores must be 65-100.`,user:`Review these public results: ${JSON.stringify(compact)}. Return {"leads":[{"sourceIndex":0,"company":"","website":"","country":"","industry":"","employees":"Unknown","opportunity":"","products":[""],"signal":"","research":"","score":75}]}. Use only supplied evidence.`});
-  return (Array.isArray(out.leads)?out.leads:[]).map(x=>{const src=items[Number(x.sourceIndex)]||{}; const score=Math.max(0,Math.min(100,Number(x.score)||0)); return {company:String(x.company||titleToCompany(src.title,src.url)).slice(0,120),website:cleanUrl(x.website||src.url||''),country:String(x.country||guessCountry(`${src.title} ${src.content}`)).slice(0,80),industry:String(x.industry||'Telecommunications prospect').slice(0,180),employees:String(x.employees||'Unknown').slice(0,60),opportunity:String(x.opportunity||'').slice(0,500),products:Array.isArray(x.products)?x.products.map(String).slice(0,10):[],signal:String(x.signal||src.content||'').slice(0,700),research:String(x.research||'').slice(0,1400),score,status:'qualified',sourceUrl:cleanUrl(src.url||x.website||''),contacts:[],selectedContactId:null,subject:'',emailBody:'',createdAt:new Date().toISOString()};}).filter(x=>x.score>=65&&x.company&&x.sourceUrl);
-}
-async function saveLead(lead){
-  if(!supabaseConfig().configured) return lead;
-  const domain=domainFromUrl(lead.website||lead.sourceUrl);
-  const existing=domain?await supabaseRequest(`companies?select=*&website=ilike.${encodeURIComponent(`%${domain}%`)}&limit=1`):[];
-  let row;
-  if(existing.length) row=existing[0]; else {
-    const body={name:lead.company,website:lead.website||lead.sourceUrl,country:lead.country,industry:lead.industry,employees:lead.employees,opportunity:lead.opportunity,products:lead.products,signal:lead.signal,research:lead.research,score:lead.score,status:lead.status,source_url:lead.sourceUrl};
-    const inserted=await supabaseRequest('companies',{method:'POST',headers:{Prefer:'return=representation'},body:JSON.stringify(body)}); row=inserted[0];
+
+function normaliseOfficialWebsite(value = '') {
+  try {
+    const u = new URL(value);
+    return `${u.protocol}//${u.hostname.replace(/^www\./, '')}/`;
+  } catch {
+    return '';
   }
-  return mapCompanyRow(row,[],null);
 }
-export default async(request)=>{
-  const method=requirePost(request); if(method) return method; const denied=checkAccess(request); if(denied) return denied;
-  try{
-    const body=await request.json().catch(()=>({})); const key=CAMPAIGNS[body.campaign]?body.campaign:'voice'; const campaign=CAMPAIGNS[key];
-    const maximumLeads=Math.max(1,Math.min(20,Number(body.maximumLeads)||10)); const resultsPerQuery=Math.max(2,Math.min(8,Number(body.resultsPerQuery)||5));
-    const batches=await Promise.all(campaign.queries.map(q=>tavilySearch(q,resultsPerQuery))); const raw=batches.flat();
-    const seen=new Set(); const unique=raw.filter(x=>{const k=cleanUrl(x.url||''); if(!k||seen.has(k)) return false; seen.add(k); return true;});
-    let leads,mode='heuristic';
-    if(process.env.OPENAI_API_KEY){try{leads=await aiQualify(unique,campaign.label);mode='OpenAI';}catch(e){leads=unique.map(x=>heuristic(x,key)).filter(x=>x.score>=65);mode=`heuristic fallback (${e.message})`;}}
-    else leads=unique.map(x=>heuristic(x,key)).filter(x=>x.score>=65);
-    const byDomain=new Map(); for(const lead of leads){const k=domainFromUrl(lead.website||lead.sourceUrl)||(lead.company||'').toLowerCase(); if(!byDomain.has(k)||byDomain.get(k).score<lead.score) byDomain.set(k,lead);}
-    const chosen=[...byDomain.values()].sort((a,b)=>b.score-a.score).slice(0,maximumLeads); const saved=[]; for(const l of chosen) saved.push(await saveLead(l));
-    return corsJson({ok:true,campaign:campaign.label,searchedResults:unique.length,qualifiedLeads:chosen.length,qualificationMode:mode,persistent:supabaseConfig().configured,leads:saved});
-  }catch(e){return corsJson({ok:false,error:e.message},500);}
+
+async function tavilySearch(query, maxResults = 5) {
+  const key = process.env.TAVILY_API_KEY;
+  if (!key) throw new Error('TAVILY_API_KEY is not configured.');
+  const response = await fetch('https://api.tavily.com/search', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      api_key: key,
+      query,
+      search_depth: 'advanced',
+      max_results: maxResults,
+      include_answer: false,
+      include_raw_content: false,
+      topic: 'general'
+    })
+  });
+  const text = await response.text();
+  if (!response.ok) throw new Error(`Tavily ${response.status}: ${text.slice(0, 700)}`);
+  const data = JSON.parse(text);
+  return Array.isArray(data.results) ? data.results : [];
+}
+
+async function extractCompanies(results, campaign) {
+  if (!process.env.OPENAI_API_KEY) {
+    throw new Error('OPENAI_API_KEY is required for accurate company extraction. Without it, article titles can be mistaken for companies.');
+  }
+
+  const compact = results.map((r, index) => ({
+    index,
+    title: String(r.title || '').slice(0, 240),
+    url: cleanUrl(r.url || ''),
+    snippet: String(r.content || '').slice(0, 1800)
+  }));
+
+  const output = await openAIJson({
+    schemaName: 'company extraction',
+    system: `You are a strict B2B company-identification analyst for Symbio Wholesale.
+Campaign: ${campaign.label}.
+
+Your task is to identify ACTUAL POTENTIAL CUSTOMER COMPANIES mentioned in the supplied search evidence.
+
+Strict rules:
+- Never use an article headline, report title, blog title, product-page title, event title or search-result title as a company name.
+- Reject media publishers, research firms, directories, job boards, government pages and generic informational pages.
+- A company must have a clear legal/trading identity and an official corporate website.
+- The company must plausibly BUY a Symbio service, not merely be a direct carrier competitor with no buyer signal.
+- Do not invent an official website. Return an empty website when it is not supported by evidence.
+- Only include a company when the evidence contains a credible signal connected to the campaign.
+- Use conservative scoring. Scores below 65 must not be returned.
+- Relevant Symbio capabilities include AU/NZ/SG DIDs, voice termination, Australian mobile numbers, A2P/two-way SMS, MVNO enablement, eSIM, IoT SIM, DIA, NBN, OptiComm, IP transit, backhaul, dark fibre and NuWave BYOC.
+
+Return JSON only in this exact shape:
+{"companies":[{"company":"","officialWebsite":"","country":"","industry":"","opportunity":"","products":[""],"buyingSignal":"","reason":"","score":75,"sourceIndexes":[0]}]}`,
+    user: `Analyse these search results and extract only real potential customer companies:\n${JSON.stringify(compact)}`
+  });
+
+  return Array.isArray(output.companies) ? output.companies : [];
+}
+
+async function verifyCompany(candidate, sourceResults, campaign) {
+  const name = String(candidate.company || '').trim();
+  if (!name) return null;
+
+  const claimedWebsite = normaliseOfficialWebsite(candidate.officialWebsite || '');
+  const verificationResults = await tavilySearch(`"${name}" official company website ${campaign.label}`, 5);
+  const combined = [...verificationResults, ...sourceResults.filter((_, i) => (candidate.sourceIndexes || []).includes(i))]
+    .filter(x => x?.url)
+    .slice(0, 10)
+    .map((r, index) => ({
+      index,
+      title: String(r.title || '').slice(0, 240),
+      url: cleanUrl(r.url || ''),
+      snippet: String(r.content || '').slice(0, 1700)
+    }));
+
+  const output = await openAIJson({
+    schemaName: 'company verification',
+    system: `You verify company identities for a B2B sales database.
+Return JSON only.
+Reject the record unless you can identify the actual company and its official corporate website.
+The official website must belong to the company, not a news publisher, app store, directory, social network, report or partner.
+Do not infer unsupported facts.
+The company must plausibly be a potential buyer for this campaign: ${campaign.label}.
+Return:
+{"accepted":true,"company":"","officialWebsite":"https://example.com/","country":"","industry":"","opportunity":"","products":[""],"buyingSignal":"","research":"","score":75,"bestEvidenceUrl":"","rejectionReason":""}`,
+    user: `Candidate company: ${name}
+Claimed website: ${claimedWebsite || 'not supplied'}
+Candidate opportunity: ${candidate.opportunity || ''}
+Candidate signal: ${candidate.buyingSignal || ''}
+Evidence: ${JSON.stringify(combined)}`
+  });
+
+  if (!output.accepted) return null;
+  const website = normaliseOfficialWebsite(output.officialWebsite || claimedWebsite);
+  if (!website || isBlockedHost(website)) return null;
+  const score = Math.max(0, Math.min(100, Number(output.score) || 0));
+  if (score < 65) return null;
+
+  const sourceUrl = cleanUrl(output.bestEvidenceUrl || combined[0]?.url || website);
+  return {
+    company: String(output.company || name).trim().slice(0, 140),
+    website,
+    country: String(output.country || candidate.country || 'Global').slice(0, 80),
+    industry: String(output.industry || candidate.industry || 'Potential wholesale telecommunications prospect').slice(0, 180),
+    employees: 'Unknown',
+    opportunity: String(output.opportunity || candidate.opportunity || campaign.label).slice(0, 500),
+    products: Array.isArray(output.products) ? output.products.map(String).slice(0, 12) : [],
+    signal: String(output.buyingSignal || candidate.buyingSignal || '').slice(0, 900),
+    research: String(output.research || candidate.reason || '').slice(0, 1800),
+    score,
+    status: 'qualified',
+    sourceUrl,
+    contacts: [],
+    selectedContactId: null,
+    subject: '',
+    emailBody: '',
+    createdAt: new Date().toISOString()
+  };
+}
+
+async function saveLead(lead) {
+  if (!supabaseConfig().configured) return { ...lead, id: `live-${crypto.randomUUID()}` };
+  const domain = domainFromUrl(lead.website);
+  const existing = domain
+    ? await supabaseRequest(`companies?select=*&website=ilike.${encodeURIComponent(`%${domain}%`)}&limit=1`)
+    : [];
+
+  let row;
+  const body = {
+    name: lead.company,
+    website: lead.website,
+    country: lead.country,
+    industry: lead.industry,
+    employees: lead.employees,
+    opportunity: lead.opportunity,
+    products: lead.products,
+    signal: lead.signal,
+    research: lead.research,
+    score: lead.score,
+    status: lead.status,
+    source_url: lead.sourceUrl,
+    updated_at: new Date().toISOString()
+  };
+
+  if (existing.length) {
+    const updated = await supabaseRequest(`companies?id=eq.${existing[0].id}`, {
+      method: 'PATCH',
+      headers: { Prefer: 'return=representation' },
+      body: JSON.stringify(body)
+    });
+    row = updated[0] || existing[0];
+  } else {
+    const inserted = await supabaseRequest('companies', {
+      method: 'POST',
+      headers: { Prefer: 'return=representation' },
+      body: JSON.stringify(body)
+    });
+    row = inserted[0];
+  }
+  return mapCompanyRow(row, [], null);
+}
+
+export default async request => {
+  const method = requirePost(request);
+  if (method) return method;
+  const denied = checkAccess(request);
+  if (denied) return denied;
+
+  try {
+    const body = await request.json().catch(() => ({}));
+    const campaignKey = CAMPAIGNS[body.campaign] ? body.campaign : 'voice';
+    const campaign = CAMPAIGNS[campaignKey];
+    const maximumLeads = Math.max(1, Math.min(8, Number(body.maximumLeads) || 5));
+    const resultsPerQuery = Math.max(3, Math.min(7, Number(body.resultsPerQuery) || 5));
+
+    const batches = await Promise.all(campaign.queries.map(query => tavilySearch(query, resultsPerQuery)));
+    const seen = new Set();
+    const rawResults = batches.flat().filter(result => {
+      const url = cleanUrl(result.url || '');
+      if (!url || seen.has(url)) return false;
+      seen.add(url);
+      return true;
+    });
+
+    const candidates = await extractCompanies(rawResults, campaign);
+    const verificationJobs = candidates.slice(0, Math.min(8, maximumLeads * 2)).map(async candidate => {
+      try {
+        return await verifyCompany(candidate, rawResults, campaign);
+      } catch (error) {
+        console.warn('Company verification failed:', candidate.company, error.message);
+        return null;
+      }
+    });
+    const verified = (await Promise.all(verificationJobs)).filter(Boolean);
+
+    const deduped = new Map();
+    for (const lead of verified) {
+      const domain = domainFromUrl(lead.website);
+      if (!domain) continue;
+      const current = deduped.get(domain);
+      if (!current || current.score < lead.score) deduped.set(domain, lead);
+    }
+
+    const chosen = [...deduped.values()].sort((a, b) => b.score - a.score).slice(0, maximumLeads);
+    const saved = [];
+    for (const lead of chosen) saved.push(await saveLead(lead));
+
+    return corsJson({
+      ok: true,
+      campaign: campaign.label,
+      searchedResults: rawResults.length,
+      candidateCompanies: candidates.length,
+      qualifiedLeads: saved.length,
+      qualificationMode: 'OpenAI company extraction + official website verification',
+      persistent: supabaseConfig().configured,
+      leads: saved
+    });
+  } catch (error) {
+    console.error(error);
+    return corsJson({ ok: false, error: error.message || 'Lead discovery failed.' }, 500);
+  }
 };
