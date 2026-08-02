@@ -15,8 +15,8 @@ export default async request => {
 
     const body = await request.json().catch(() => ({}));
     const campaign = ['voice', 'sms', 'mobile', 'data', 'nuwave'].includes(body.campaign) ? body.campaign : 'voice';
-    const maximumLeads = Math.max(1, Math.min(5, Number(body.maximumLeads) || 3));
-    const resultsPerQuery = Math.max(2, Math.min(5, Number(body.resultsPerQuery) || 3));
+    const maximumLeads = Math.max(1, Math.min(50, Number(body.maximumLeads) || 50));
+    const resultsPerQuery = Math.max(3, Math.min(10, Number(body.resultsPerQuery) || 10));
 
     const rows = await supabaseRequest('search_jobs', {
       method: 'POST',
