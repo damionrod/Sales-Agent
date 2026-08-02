@@ -4,6 +4,7 @@ import {
 } from './_shared.mjs';
 
 const CAMPAIGNS = {
+  all: { label: 'All active product categories', focus: 'all active Symbio Wholesale services across voice, numbering, messaging, mobile, eSIM, IoT, MVNO, data connectivity, IP transit, backhaul, dark fibre and NuWave BYOC' },
   voice: { label: 'Voice, DIDs and termination', focus: 'cloud communications, UCaaS, CPaaS, VoIP, contact centres, international carriers and communications software expanding into Australia, New Zealand or Singapore' },
   sms: { label: 'A2P and two-way SMS', focus: 'customer engagement, fintech, SaaS, logistics, healthcare, marketplaces and communications platforms needing business messaging in Australia, New Zealand or Singapore' },
   mobile: { label: 'MVNO, eSIM and IoT SIMs', focus: 'brands launching mobile services, eSIM platforms, IoT companies, fleet tracking, telematics, connected devices and travel connectivity businesses' },
@@ -105,7 +106,7 @@ function validateCandidate(candidate, allResults, campaign) {
     products: Array.isArray(candidate.products) ? candidate.products.map(String).slice(0, 12) : [],
     signal: String(candidate.buyingSignal || '').slice(0, 900),
     research: String(candidate.research || '').slice(0, 1800),
-    score, status: 'qualified', sourceUrl: cleanUrl(evidence?.url || website),
+    score, status: 'qualified', leadCategory: 'other', sourceUrl: cleanUrl(evidence?.url || website),
     contacts: [], selectedContactId: null, subject: '', emailBody: '', createdAt: new Date().toISOString()
   };
 }
@@ -113,7 +114,7 @@ function validateCandidate(candidate, allResults, campaign) {
 async function saveLead(lead) {
   const domain = domainFromUrl(lead.website);
   const existing = await supabaseRequest(`companies?select=*&website=ilike.${encodeURIComponent(`%${domain}%`)}&limit=1`);
-  const body = { name: lead.company, website: lead.website, country: lead.country, industry: lead.industry, employees: lead.employees, opportunity: lead.opportunity, products: lead.products, signal: lead.signal, research: lead.research, score: lead.score, status: lead.status, source_url: lead.sourceUrl, updated_at: new Date().toISOString() };
+  const body = { name: lead.company, website: lead.website, country: lead.country, industry: lead.industry, employees: lead.employees, opportunity: lead.opportunity, products: lead.products, signal: lead.signal, research: lead.research, score: lead.score, status: lead.status, lead_category: lead.leadCategory || 'other', source_url: lead.sourceUrl, updated_at: new Date().toISOString() };
   const rows = existing.length
     ? await supabaseRequest(`companies?id=eq.${existing[0].id}`, { method: 'PATCH', headers: { Prefer: 'return=representation' }, body: JSON.stringify(body) })
     : await supabaseRequest('companies', { method: 'POST', headers: { Prefer: 'return=representation' }, body: JSON.stringify(body) });

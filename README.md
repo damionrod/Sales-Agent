@@ -1,37 +1,20 @@
-# Symbio AI Sales Agent — Complete V2
+# Symbio AI Sales Agent v3
 
-A human-approved lead generation application for Symbio Wholesale.
+Complete Netlify-ready application with Tavily discovery, OpenAI qualification and email writing, Supabase storage, Apollo contact discovery, service catalogue management, CSV export, lead categories and a master all-services search.
 
-## Included workflow
+## Lead categories
 
-1. Tavily searches public web sources.
-2. OpenAI identifies and qualifies actual companies rather than article titles.
-3. Verified companies are stored in Supabase.
-4. Apollo finds suitable decision-makers where the Apollo plan permits the required endpoints.
-5. OpenAI creates a personalised email using only the active Services Catalogue.
-6. Damien reviews, edits, approves, and optionally creates an Outlook draft or sends after Microsoft 365 is configured.
+Each lead can be categorised as:
 
-## New in this release
+- Existing
+- Emailed
+- Unqualified
+- Other
 
-- Maximum **50 qualified leads per run** (10, 25, or 50 selectable; default 50).
-- Background processing to reduce browser request timeouts.
-- CSV downloads for leads, contacts, or combined records.
-- Editable Services Catalogue under Settings.
-- Add, edit, disable, enable, reorder, and remove services.
-- Disabled services are excluded from discovery and email writing.
-- Batched company extraction to reduce Tavily/OpenAI calls and improve lead quality.
-- Tavily request timeout handling.
-- Email generation can begin without an Apollo contact; Outlook send still requires a real email address.
+Categories are independent from workflow status, so a lead can be categorised as Existing while retaining its workflow history.
 
-## Required environment variables
+## Master search
 
-- `TAVILY_API_KEY`
-- `OPENAI_API_KEY`
-- `OPENAI_MODEL` (recommended: `gpt-5-mini`)
-- `SUPABASE_URL` including `https://`
-- `SUPABASE_SECRET_KEY` or `SUPABASE_SERVICE_ROLE_KEY`
-- `APOLLO_API_KEY`
+Choose **Search ALL product categories** to build search queries from every active service in Settings → Services catalogue. A run saves up to the selected maximum of 10, 25 or 50 verified leads in total.
 
-Microsoft Outlook variables remain optional until sending is enabled.
-
-Read `UPLOAD-INSTRUCTIONS.md` for the simplest deployment steps.
+See `UPLOAD-INSTRUCTIONS.md` for deployment steps.

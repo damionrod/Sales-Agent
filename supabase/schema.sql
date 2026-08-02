@@ -146,3 +146,7 @@ insert into services (name, category, description, active, sort_order) values
 ('Dark Fibre','Data & Connectivity','Dedicated dark fibre connectivity where available.',true,190),
 ('NuWave BYOC','Cloud & Carrier','Carrier connectivity for supported NuWave BYOC deployments.',true,200)
 on conflict (name) do nothing;
+
+-- Lead organisation category (safe migration for existing projects)
+alter table companies add column if not exists lead_category text not null default 'other';
+create index if not exists companies_lead_category_idx on companies(lead_category);
