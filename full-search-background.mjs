@@ -14,10 +14,10 @@ export default async request => {
     await update(jobId,{status:'running',stage:'starting',progress:2,message:'Starting automatic pipeline…'});
     const result=await runDiscovery({
       campaignKey:body.campaign,maximumLeads:body.maximumLeads||5,resultsPerQuery:body.resultsPerQuery||4,
-      autoContacts:body.autoContacts!==false,autoEmail:body.autoEmail!==false,maximumContacts:body.maximumContacts||1,
+      autoContacts:false,autoEmail:false,maximumContacts:body.maximumContacts||1,
       onProgress:async p=>update(jobId,p)
     });
-    await update(jobId,{status:'complete',stage:'complete',progress:100,message:`${result.qualifiedLeads} leads, ${result.contactsFound} contacts and ${result.emailsGenerated} emails prepared.`,
+    await update(jobId,{status:'complete',stage:'complete',progress:100,message:`${result.qualifiedLeads} verified leads found. Select leads to find contacts next.`,
       searched_results:result.searchedResults,candidate_companies:result.candidateCompanies,qualified_leads:result.qualifiedLeads,
       contacts_found:result.contactsFound,emails_generated:result.emailsGenerated,completed_at:new Date().toISOString()});
   }catch(error){
