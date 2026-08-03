@@ -126,6 +126,13 @@ The included `supabase/schema.sql` is the same compatible schema. It is safe to 
 
 These are possible prospects, not confirmed buyers. Check Symbio CRM ownership, existing customer status, public evidence and applicable outreach rules before contacting anyone.
 
-## Automatic full pipeline update
+## Lead categories
 
-This release adds a background workflow that performs company discovery, Apollo contact discovery, and personalised email generation from one button. Run the latest `supabase/schema.sql` before deploying because the workflow uses the `search_jobs` table for progress tracking.
+This release combines the automatic lead → contact → personalised-email pipeline with lead categories:
+
+- Other
+- Existing
+- Emailed
+- Unqualified
+
+The default **Active leads** view automatically hides Existing and Unqualified records. They remain in Supabase and can be viewed through the category filter.

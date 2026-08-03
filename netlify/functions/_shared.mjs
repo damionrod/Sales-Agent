@@ -120,6 +120,7 @@ export function mapCompanyRow(row, contacts = [], draft = null) {
     research: row.research || '',
     score: row.score || 0,
     status: row.status || 'new',
+    leadCategory: row.lead_category || 'other',
     sourceUrl: row.source_url || row.website || '',
     contacts: contacts.map(c => ({
       id: c.id,

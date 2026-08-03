@@ -109,3 +109,20 @@ alter table search_jobs enable row level security;
 do $$ begin
   create policy "Authenticated users manage search jobs" on search_jobs for all to authenticated using (true) with check (true);
 exception when duplicate_object then null; end $$;
+
+-- Lead categorisation migration
+alter table companies add column if not exists lead_category text not null default 'other';
+create index if not exists companies_lead_category_idx on companies(lead_category);
+
+-- Automatic pipeline migration for projects that already had search_jobs
+alter table search_jobs add column if not exists message text;
+alter table search_jobs add column if not exists requested_leads integer not null default 5;
+alter table search_jobs add column if not exists auto_contacts boolean not null default true;
+alter table search_jobs add column if not exists auto_email boolean not null default true;
+alter table search_jobs add column if not exists contacts_found integer not null default 0;
+alter table search_jobs add column if not exists emails_generated integer not null default 0;
+
+-- Permit both earlier and automatic-pipeline completion status values.
+alter table search_jobs drop constraint if exists search_jobs_status_check;
+alter table search_jobs add constraint search_jobs_status_check check (status in ('queued','running','complete','completed','failed'));
+notify pgrst, 'reload schema';
