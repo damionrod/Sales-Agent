@@ -7,7 +7,6 @@ export default async(request)=>{
   if(!supabaseConfig().configured) return corsJson({ok:true,persistent:false});
   const patch={updated_at:new Date().toISOString()};
   if(b.status){if(!ALLOWED.has(b.status)) throw new Error('Invalid status.');patch.status=b.status;}
-  if(typeof b.leadCategory==='string'){const allowedCategories=new Set(['existing','emailed','unqualified','other']);if(!allowedCategories.has(b.leadCategory))throw new Error('Invalid lead category.');patch.lead_category=b.leadCategory;}
   if(typeof b.subject==='string'||typeof b.body==='string'){
     if(b.draftId) await supabaseRequest(`email_drafts?id=eq.${encodeURIComponent(b.draftId)}`,{method:'PATCH',headers:{Prefer:'return=minimal'},body:JSON.stringify({subject:b.subject||'',body:b.body||'',approved_at:b.status==='approved'?new Date().toISOString():null,updated_at:new Date().toISOString()})});
     else if(b.subject||b.body){const rows=await supabaseRequest('email_drafts',{method:'POST',headers:{Prefer:'return=representation'},body:JSON.stringify({company_id:b.id,contact_id:b.contactId||null,subject:b.subject||'',body:b.body||'',approved_at:b.status==='approved'?new Date().toISOString():null})});b.draftId=rows[0]?.id;}
