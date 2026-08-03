@@ -1,9 +1,10 @@
 import {
   corsJson, requirePost, checkAccess, cleanUrl, domainFromUrl,
-  openAIJson, supabaseConfig, supabaseRequest, mapCompanyRow
+  openAIJson, supabaseConfig, supabaseRequest, mapCompanyRow, fetchWithTimeout, friendlyExternalError
 } from './_shared.mjs';
 
 const CAMPAIGNS = {
+  all: { label: 'All active service categories', queries: [] },
   voice: {
     label: 'Voice, DIDs and termination',
     queries: [
@@ -81,7 +82,7 @@ function normaliseOfficialWebsite(value = '') {
 async function tavilySearch(query, maxResults = 5) {
   const key = process.env.TAVILY_API_KEY;
   if (!key) throw new Error('TAVILY_API_KEY is not configured.');
-  const response = await fetch('https://api.tavily.com/search', {
+  const response = await fetchWithTimeout('https://api.tavily.com/search', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -93,9 +94,9 @@ async function tavilySearch(query, maxResults = 5) {
       include_raw_content: false,
       topic: 'general'
     })
-  });
+  }, 30000);
   const text = await response.text();
-  if (!response.ok) throw new Error(`Tavily ${response.status}: ${text.slice(0, 700)}`);
+  if (!response.ok) throw new Error(`Tavily ${response.status}: ${friendlyExternalError(text, 'The web search provider timed out.')}`);
   const data = JSON.parse(text);
   return Array.isArray(data.results) ? data.results : [];
 }
@@ -116,6 +117,7 @@ async function extractCompanies(results, campaign) {
     schemaName: 'company extraction',
     system: `You are a strict B2B company-identification analyst for Symbio Wholesale.
 Campaign: ${campaign.label}.
+Active services catalogue: ${campaign.serviceContext || 'Use the standard Symbio capabilities listed below' }.
 
 Your task is to identify ACTUAL POTENTIAL CUSTOMER COMPANIES mentioned in the supplied search evidence.
 
@@ -160,7 +162,7 @@ Return JSON only.
 Reject the record unless you can identify the actual company and its official corporate website.
 The official website must belong to the company, not a news publisher, app store, directory, social network, report or partner.
 Do not infer unsupported facts.
-The company must plausibly be a potential buyer for this campaign: ${campaign.label}.
+The company must plausibly be a potential buyer for this campaign: ${campaign.label}. Active services: ${campaign.serviceContext || 'standard Symbio services'}.
 Return:
 {"accepted":true,"company":"","officialWebsite":"https://example.com/","country":"","industry":"","opportunity":"","products":[""],"buyingSignal":"","research":"","score":75,"bestEvidenceUrl":"","rejectionReason":""}`,
     user: `Candidate company: ${name}
@@ -255,13 +257,25 @@ async function internalJson(handler, path, payload) {
   return data;
 }
 
+async function activeServices(){
+  if(!supabaseConfig().configured) return [];
+  try{return await supabaseRequest('services?select=name,category,description&active=eq.true&include_in_all=eq.true&order=sort_order.asc');}
+  catch{return [];}
+}
+function serviceQueries(services){
+  return services.slice(0,12).map(s=>`company expanding or launching ${s.name} services in Australia New Zealand Singapore wholesale partner`);
+}
+
 export async function runDiscovery({
   campaignKey = 'voice', maximumLeads = 5, resultsPerQuery = 5,
   autoContacts = true, autoEmail = true, maximumContacts = 1,
   onProgress = async () => {}
 } = {}) {
-  const campaign = CAMPAIGNS[campaignKey] || CAMPAIGNS.voice;
-  maximumLeads = Math.max(1, Math.min(10, Number(maximumLeads) || 5));
+  const services = await activeServices();
+  const baseCampaign = CAMPAIGNS[campaignKey] || CAMPAIGNS.voice;
+  const campaign = campaignKey==='all' ? {label:'All active service categories',queries:serviceQueries(services).length?serviceQueries(services):Object.values(CAMPAIGNS).filter(x=>x.queries.length).flatMap(x=>x.queries).slice(0,12)} : baseCampaign;
+  campaign.serviceContext = services.map(s=>`${s.name} (${s.category}): ${s.description||''}`).join('; ');
+  maximumLeads = Math.max(1, Math.min(50, Number(maximumLeads) || 5));
   resultsPerQuery = Math.max(3, Math.min(7, Number(resultsPerQuery) || 5));
 
   await onProgress({ stage: 'searching', progress: 8, message: 'Searching public sources…' });

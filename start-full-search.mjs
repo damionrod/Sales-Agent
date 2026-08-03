@@ -8,7 +8,7 @@ export default async request => {
     const body=await request.json().catch(()=>({}));
     const rows=await supabaseRequest('search_jobs',{method:'POST',headers:{Prefer:'return=representation'},body:JSON.stringify({
       status:'queued',stage:'queued',progress:0,message:'Search queued',campaign:body.campaign||'voice',
-      requested_leads:Math.max(1,Math.min(10,Number(body.maximumLeads)||5)),
+      requested_leads:Math.max(1,Math.min(50,Number(body.maximumLeads)||5)),
       auto_contacts:body.autoContacts!==false,auto_email:body.autoEmail!==false
     })});
     const job=rows[0];

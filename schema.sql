@@ -126,3 +126,40 @@ alter table search_jobs add column if not exists emails_generated integer not nu
 alter table search_jobs drop constraint if exists search_jobs_status_check;
 alter table search_jobs add constraint search_jobs_status_check check (status in ('queued','running','complete','completed','failed'));
 notify pgrst, 'reload schema';
+
+-- Contact phone fields
+alter table contacts add column if not exists phone text;
+alter table contacts add column if not exists phone_type text;
+alter table contacts add column if not exists company_phone text;
+
+-- Editable services catalogue
+create table if not exists services (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  category text not null default 'Other',
+  description text,
+  active boolean not null default true,
+  include_in_all boolean not null default true,
+  sort_order integer not null default 100,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create unique index if not exists services_name_unique on services ((lower(name)));
+alter table services enable row level security;
+do $$ begin
+  create policy "Authenticated users manage services" on services for all to authenticated using (true) with check (true);
+exception when duplicate_object then null; end $$;
+
+insert into services (name,category,description,active,include_in_all,sort_order) values
+('Virtual Numbers / DIDs','Voice & Numbering','AU, NZ and Singapore virtual numbers and DIDs',true,true,1),
+('Call Termination','Voice & Numbering','Inbound and outbound call termination in AU, NZ and Singapore',true,true,2),
+('Australian Mobile Numbers','Mobile','Australian mobile numbering and porting',true,true,3),
+('A2P / Two-way SMS','Messaging','A2P, transactional and two-way SMS',true,true,4),
+('MVNO Enablement','Mobile','Australian MVNO and mobile wholesale enablement',true,true,5),
+('eSIMs','Mobile','eSIM connectivity and enablement',true,true,6),
+('IoT SIMs','Mobile','IoT and connected-device SIM connectivity',true,true,7),
+('DIA / NBN / OptiComm','Data','Dedicated internet, NBN and OptiComm connectivity',true,true,8),
+('IP Transit / Backhaul / Dark Fibre','Data','IP transit, backhaul and dark fibre',true,true,9),
+('NuWave BYOC','Cloud & Carrier','NuWave BYOC and carrier interconnect opportunities',true,true,10)
+on conflict do nothing;
+notify pgrst, 'reload schema';
