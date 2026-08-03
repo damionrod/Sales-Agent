@@ -79,26 +79,53 @@ function normaliseOfficialWebsite(value = '') {
   }
 }
 
+async function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
+
+async function mapLimit(items, limit, worker) {
+  const results = new Array(items.length);
+  let next = 0;
+  async function run() {
+    while (true) {
+      const index = next++;
+      if (index >= items.length) return;
+      try { results[index] = await worker(items[index], index); }
+      catch (error) { results[index] = { __error: error }; }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, run));
+  return results;
+}
+
 async function tavilySearch(query, maxResults = 5) {
   const key = process.env.TAVILY_API_KEY;
   if (!key) throw new Error('TAVILY_API_KEY is not configured.');
-  const response = await fetchWithTimeout('https://api.tavily.com/search', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      api_key: key,
-      query,
-      search_depth: 'advanced',
-      max_results: maxResults,
-      include_answer: false,
-      include_raw_content: false,
-      topic: 'general'
-    })
-  }, 30000);
-  const text = await response.text();
-  if (!response.ok) throw new Error(`Tavily ${response.status}: ${friendlyExternalError(text, 'The web search provider timed out.')}`);
-  const data = JSON.parse(text);
-  return Array.isArray(data.results) ? data.results : [];
+
+  let lastError;
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const response = await fetchWithTimeout('https://api.tavily.com/search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          api_key: key,
+          query,
+          search_depth: attempt === 1 ? 'advanced' : 'basic',
+          max_results: maxResults,
+          include_answer: false,
+          include_raw_content: false,
+          topic: 'general'
+        })
+      }, attempt === 1 ? 22000 : 18000);
+      const text = await response.text();
+      if (!response.ok) throw new Error(`Tavily ${response.status}: ${friendlyExternalError(text, 'The web search provider did not respond.')}`);
+      const data = JSON.parse(text);
+      return Array.isArray(data.results) ? data.results : [];
+    } catch (error) {
+      lastError = error;
+      if (attempt < 2) await sleep(1200);
+    }
+  }
+  throw lastError || new Error('The web search provider did not respond.');
 }
 
 async function extractCompanies(results, campaign) {
@@ -263,7 +290,15 @@ async function activeServices(){
   catch{return [];}
 }
 function serviceQueries(services){
-  return services.slice(0,12).map(s=>`company expanding or launching ${s.name} services in Australia New Zealand Singapore wholesale partner`);
+  const grouped = new Map();
+  for (const service of services) {
+    const category = service.category || 'Other';
+    if (!grouped.has(category)) grouped.set(category, []);
+    grouped.get(category).push(service.name);
+  }
+  return [...grouped.entries()].slice(0, 6).map(([category, names]) =>
+    `companies expanding or launching ${category} services (${names.slice(0, 5).join(', ')}) in Australia New Zealand Singapore seeking wholesale partners`
+  );
 }
 
 export async function runDiscovery({
@@ -278,8 +313,13 @@ export async function runDiscovery({
   maximumLeads = Math.max(1, Math.min(50, Number(maximumLeads) || 5));
   resultsPerQuery = Math.max(3, Math.min(7, Number(resultsPerQuery) || 5));
 
-  await onProgress({ stage: 'searching', progress: 8, message: 'Searching public sources…' });
-  const batches = await Promise.all(campaign.queries.map(query => tavilySearch(query, resultsPerQuery)));
+  await onProgress({ stage: 'searching', progress: 8, message: 'Searching public sources in small batches…' });
+  const batchResults = await mapLimit(campaign.queries, 3, async (query, index) => {
+    await onProgress({ stage: 'searching', progress: 8 + Math.round((index / Math.max(1, campaign.queries.length)) * 14), message: `Searching source group ${index + 1} of ${campaign.queries.length}…` });
+    return await tavilySearch(query, resultsPerQuery);
+  });
+  const batches = batchResults.filter(x => Array.isArray(x));
+  const failedSearches = batchResults.filter(x => x?.__error).length;
   const seen = new Set();
   const rawResults = batches.flat().filter(result => {
     const url = cleanUrl(result.url || '');
@@ -287,13 +327,19 @@ export async function runDiscovery({
     seen.add(url); return true;
   });
 
+  if (!rawResults.length) {
+    throw new Error(`No usable web results were returned${failedSearches ? ` (${failedSearches} source searches timed out)` : ''}. Try one product category again in a few minutes.`);
+  }
+
   await onProgress({ stage: 'qualifying', progress: 25, message: `Analysing ${rawResults.length} search results…` });
   const candidates = await extractCompanies(rawResults, campaign);
-  const verificationJobs = candidates.slice(0, Math.min(12, maximumLeads * 2)).map(async candidate => {
+  const candidatesToVerify = candidates.slice(0, Math.min(50, Math.max(12, maximumLeads * 2)));
+  const verificationResults = await mapLimit(candidatesToVerify, 3, async (candidate, index) => {
+    await onProgress({ stage: 'verifying', progress: 28 + Math.round((index / Math.max(1, candidatesToVerify.length)) * 12), message: `Verifying company ${index + 1} of ${candidatesToVerify.length}…` });
     try { return await verifyCompany(candidate, rawResults, campaign); }
     catch (error) { console.warn('Company verification failed:', candidate.company, error.message); return null; }
   });
-  const verified = (await Promise.all(verificationJobs)).filter(Boolean);
+  const verified = verificationResults.filter(x => x && !x.__error);
   const deduped = new Map();
   for (const lead of verified) {
     const domain = domainFromUrl(lead.website); if (!domain) continue;
