@@ -41,10 +41,15 @@ Older Supabase projects can use `SUPABASE_SERVICE_ROLE_KEY` instead of `SUPABASE
 
 The OpenAI key is now required for discovery because the earlier keyword fallback was what allowed article titles to be treated as companies.
 
-Optional integrations:
+Optional later integrations:
 
 ```text
 APOLLO_API_KEY
+MICROSOFT_TENANT_ID
+MICROSOFT_CLIENT_ID
+MICROSOFT_CLIENT_SECRET
+MICROSOFT_SENDER_EMAIL
+ALLOW_DIRECT_SEND=false
 APP_ACCESS_TOKEN
 ```
 
@@ -94,7 +99,7 @@ Click anywhere on the company row or click **Open →**. The company drawer cont
 - Public evidence link
 - Contact discovery
 - Personalised email drafting
-- Copy subject and email, hold, reject, mark emailed manually, and delete controls
+- Hold, reject, approve and delete controls
 
 ## Supabase
 
@@ -121,7 +126,13 @@ The included `supabase/schema.sql` is the same compatible schema. It is safe to 
 
 These are possible prospects, not confirmed buyers. Check Symbio CRM ownership, existing customer status, public evidence and applicable outreach rules before contacting anyone.
 
+## Lead categories
 
-## Manual email workflow
+This release combines the automatic lead → contact → personalised-email pipeline with lead categories:
 
-This version never sends email and does not create Outlook drafts. Generate the personalised message, use **Copy subject** and **Copy email**, send it manually, then choose **Mark emailed manually**. No Microsoft 365 environment variables are required.
+- Other
+- Existing
+- Emailed
+- Unqualified
+
+The default **Active leads** view automatically hides Existing and Unqualified records. They remain in Supabase and can be viewed through the category filter.
