@@ -71,27 +71,6 @@ export function randomId(prefix = 'id') {
   return `${prefix}-${crypto.randomUUID()}`;
 }
 
-export function looksLikeHtml(value = '') {
-  const text = String(value || '').trim().toLowerCase();
-  return text.startsWith('<!doctype html') || text.startsWith('<html') || text.includes('<title>inactivity timeout</title>') || text.includes('login redirect');
-}
-
-export function friendlyExternalError(value = '', fallback = 'The external service did not respond in time. Please try again.') {
-  const text = String(value || '');
-  if (looksLikeHtml(text)) return fallback;
-  return text.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 700) || fallback;
-}
-
-export async function fetchWithTimeout(url, options = {}, timeoutMs = 45000) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try { return await fetch(url, { ...options, signal: controller.signal }); }
-  catch (error) {
-    if (error?.name === 'AbortError') throw new Error('The external service timed out. Please try again.');
-    throw error;
-  } finally { clearTimeout(timer); }
-}
-
 export async function openAIJson({ system, user, schemaName = 'result' }) {
   const key = process.env.OPENAI_API_KEY;
   if (!key) throw new Error('OPENAI_API_KEY is not configured.');
@@ -104,21 +83,21 @@ export async function openAIJson({ system, user, schemaName = 'result' }) {
     ],
     response_format: { type: 'json_object' }
   };
-  let response = await fetchWithTimeout('https://api.openai.com/v1/chat/completions', {
+  let response = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
     body: JSON.stringify(payload)
-  }, 50000);
+  });
   if (!response.ok && response.status === 400) {
     delete payload.response_format;
-    response = await fetchWithTimeout('https://api.openai.com/v1/chat/completions', {
+    response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
       body: JSON.stringify(payload)
-    }, 50000);
+    });
   }
   const text = await response.text();
-  if (!response.ok) throw new Error(`OpenAI ${response.status}: ${friendlyExternalError(text, 'OpenAI is temporarily unavailable.')}`);
+  if (!response.ok) throw new Error(`OpenAI ${response.status}: ${text.slice(0, 800)}`);
   const data = JSON.parse(text);
   const content = data.choices?.[0]?.message?.content;
   if (!content) throw new Error('OpenAI returned no content.');
@@ -141,8 +120,6 @@ export function mapCompanyRow(row, contacts = [], draft = null) {
     research: row.research || '',
     score: row.score || 0,
     status: row.status || 'new',
-    leadCategory: row.lead_category || 'other',
-    leadCategory: row.lead_category || 'other',
     sourceUrl: row.source_url || row.website || '',
     contacts: contacts.map(c => ({
       id: c.id,
@@ -150,9 +127,6 @@ export function mapCompanyRow(row, contacts = [], draft = null) {
       title: c.title || '',
       email: c.email || '',
       linkedin: c.linkedin || '',
-      phone: c.phone || '',
-      phoneType: c.phone_type || '',
-      companyPhone: c.company_phone || '',
       confidence: c.confidence || 'Unknown',
       relevance: c.relevance || 0,
       reason: c.reason || ''
