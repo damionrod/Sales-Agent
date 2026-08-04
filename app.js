@@ -49,10 +49,10 @@ function renderDrawer(){const root=document.getElementById('drawer-root'),l=stat
 async function checkHealth(){try{state.health=await api('health',{method:'GET'});const all=state.health.integrations;document.getElementById('mode-pill').innerHTML=`<span class="live-dot"></span> ${all.tavily&&all.openai?'Live AI connected':'Setup incomplete'}`;}catch(e){state.health={integrations:{}};document.getElementById('mode-pill').textContent='Access required';}}
 async function sync(){setBusy('Syncing from Supabase');try{const d=await api('list-leads',{method:'GET'});if(d.configured&&d.leads.length){state.leads=d.leads;saveLocal();toast(`Loaded ${d.leads.length} lead(s) from Supabase.`)}else toast('Supabase is empty or not configured.','error')}catch(e){toast(e.message,'error')}finally{clearBusy()}}
 async function discover(){
-  setBusy('discover');state.message='Starting company, contact and email discovery…';render();
+  setBusy('discover');state.message='Starting resumable lead discovery…';render();
   try{
-    const d=await api('start-full-search',{method:'POST',body:JSON.stringify({campaign:state.campaign,maximumLeads:50,resultsPerQuery:4,autoContacts:true,autoEmail:true,maximumContacts:1})});
-    state.searchJobId=d.jobId;state.message='Search started. The app is finding companies, contacts and personalised emails in the background.';render();
+    const d=await api('start-full-search',{method:'POST',body:JSON.stringify({campaign:state.campaign,maximumLeads:20,resultsPerQuery:5,autoContacts:false,autoEmail:false,maximumContacts:1})});
+    state.searchJobId=d.jobId;state.message='Search started. Verified companies will be saved batch by batch, even if one source times out.';render();
     await pollSearchJob(d.jobId);
   }catch(e){state.message=e.message;toast(e.message,'error');state.busy='';render()}
 }

@@ -227,15 +227,20 @@ Evidence: ${JSON.stringify(combined)}`
   };
 }
 
+async function findExistingCompany(website) {
+  const domain = domainFromUrl(website);
+  if (!domain) return [];
+  const exact = await supabaseRequest(`companies?select=*&website=eq.${encodeURIComponent(website)}&limit=1`).catch(() => []);
+  if (exact.length) return exact;
+  return await supabaseRequest(`companies?select=*&website=ilike.${encodeURIComponent(`%${domain}%`)}&limit=1`).catch(() => []);
+}
+
 async function saveLead(lead) {
   if (!supabaseConfig().configured) return { ...lead, id: `live-${crypto.randomUUID()}` };
-  const domain = domainFromUrl(lead.website);
-  const existing = domain
-    ? await supabaseRequest(`companies?select=*&website=ilike.${encodeURIComponent(`%${domain}%`)}&limit=1`)
-    : [];
+  let existing = await findExistingCompany(lead.website);
 
   let row;
-  const body = {
+  const researchBody = {
     name: lead.company,
     website: lead.website,
     country: lead.country,
@@ -246,29 +251,41 @@ async function saveLead(lead) {
     signal: lead.signal,
     research: lead.research,
     score: lead.score,
-    status: lead.status,
     source_url: lead.sourceUrl,
     updated_at: new Date().toISOString()
   };
 
   if (existing.length) {
+    // Preserve the user's CRM category and workflow status when refreshing research.
     const updated = await supabaseRequest(`companies?id=eq.${existing[0].id}`, {
       method: 'PATCH',
       headers: { Prefer: 'return=representation' },
-      body: JSON.stringify(body)
+      body: JSON.stringify(researchBody)
     });
     row = updated[0] || existing[0];
   } else {
-    const inserted = await supabaseRequest('companies', {
-      method: 'POST',
-      headers: { Prefer: 'return=representation' },
-      body: JSON.stringify(body)
-    });
-    row = inserted[0];
+    try {
+      const inserted = await supabaseRequest('companies', {
+        method: 'POST',
+        headers: { Prefer: 'return=representation' },
+        body: JSON.stringify({ ...researchBody, status: lead.status || 'qualified', lead_category: lead.leadCategory || 'other' })
+      });
+      row = inserted[0];
+    } catch (error) {
+      // Another batch may have inserted the same website milliseconds earlier.
+      if (!String(error.message || '').includes('409')) throw error;
+      existing = await findExistingCompany(lead.website);
+      if (!existing.length) throw error;
+      const updated = await supabaseRequest(`companies?id=eq.${existing[0].id}`, {
+        method: 'PATCH',
+        headers: { Prefer: 'return=representation' },
+        body: JSON.stringify(researchBody)
+      });
+      row = updated[0] || existing[0];
+    }
   }
   return mapCompanyRow(row, [], null);
 }
-
 
 
 async function internalJson(handler, path, payload) {
@@ -302,96 +319,123 @@ function serviceQueries(services){
 }
 
 export async function runDiscovery({
-  campaignKey = 'voice', maximumLeads = 5, resultsPerQuery = 5,
-  autoContacts = true, autoEmail = true, maximumContacts = 1,
+  campaignKey = 'voice', maximumLeads = 10, resultsPerQuery = 5,
+  autoContacts = false, autoEmail = false, maximumContacts = 1,
   onProgress = async () => {}
 } = {}) {
   const services = await activeServices();
   const baseCampaign = CAMPAIGNS[campaignKey] || CAMPAIGNS.voice;
-  const campaign = campaignKey==='all' ? {label:'All active service categories',queries:serviceQueries(services).length?serviceQueries(services):Object.values(CAMPAIGNS).filter(x=>x.queries.length).flatMap(x=>x.queries).slice(0,12)} : baseCampaign;
-  campaign.serviceContext = services.map(s=>`${s.name} (${s.category}): ${s.description||''}`).join('; ');
-  maximumLeads = Math.max(1, Math.min(50, Number(maximumLeads) || 5));
+  const fallbackAll = Object.values(CAMPAIGNS).filter(x => x.queries.length).flatMap(x => x.queries).slice(0, 12);
+  const campaign = campaignKey === 'all'
+    ? { label: 'All active service categories', queries: serviceQueries(services).length ? serviceQueries(services) : fallbackAll }
+    : baseCampaign;
+  campaign.serviceContext = services.map(s => `${s.name} (${s.category}): ${s.description || ''}`).join('; ');
+
+  maximumLeads = Math.max(1, Math.min(50, Number(maximumLeads) || 10));
   resultsPerQuery = Math.max(3, Math.min(7, Number(resultsPerQuery) || 5));
 
-  await onProgress({ stage: 'searching', progress: 8, message: 'Searching public sources in small batches…' });
-  const batchResults = await mapLimit(campaign.queries, 3, async (query, index) => {
-    await onProgress({ stage: 'searching', progress: 8 + Math.round((index / Math.max(1, campaign.queries.length)) * 14), message: `Searching source group ${index + 1} of ${campaign.queries.length}…` });
-    return await tavilySearch(query, resultsPerQuery);
-  });
-  const batches = batchResults.filter(x => Array.isArray(x));
-  const failedSearches = batchResults.filter(x => x?.__error).length;
-  const seen = new Set();
-  const rawResults = batches.flat().filter(result => {
-    const url = cleanUrl(result.url || '');
-    if (!url || seen.has(url)) return false;
-    seen.add(url); return true;
-  });
-
-  if (!rawResults.length) {
-    throw new Error(`No usable web results were returned${failedSearches ? ` (${failedSearches} source searches timed out)` : ''}. Try one product category again in a few minutes.`);
-  }
-
-  await onProgress({ stage: 'qualifying', progress: 25, message: `Analysing ${rawResults.length} search results…` });
-  const candidates = await extractCompanies(rawResults, campaign);
-  const candidatesToVerify = candidates.slice(0, Math.min(50, Math.max(12, maximumLeads * 2)));
-  const verificationResults = await mapLimit(candidatesToVerify, 3, async (candidate, index) => {
-    await onProgress({ stage: 'verifying', progress: 28 + Math.round((index / Math.max(1, candidatesToVerify.length)) * 12), message: `Verifying company ${index + 1} of ${candidatesToVerify.length}…` });
-    try { return await verifyCompany(candidate, rawResults, campaign); }
-    catch (error) { console.warn('Company verification failed:', candidate.company, error.message); return null; }
-  });
-  const verified = verificationResults.filter(x => x && !x.__error);
-  const deduped = new Map();
-  for (const lead of verified) {
-    const domain = domainFromUrl(lead.website); if (!domain) continue;
-    const current = deduped.get(domain);
-    if (!current || current.score < lead.score) deduped.set(domain, lead);
-  }
-  const chosen = [...deduped.values()].sort((a,b)=>b.score-a.score).slice(0,maximumLeads);
-
   const saved = [];
-  for (let i=0;i<chosen.length;i++) {
-    let lead = await saveLead(chosen[i]);
-    const baseProgress = 40 + Math.round((i / Math.max(1, chosen.length)) * 50);
-    await onProgress({ stage: 'contacts', progress: baseProgress, message: `Preparing ${lead.company} (${i+1}/${chosen.length})…` });
+  const savedDomains = new Set();
+  let searchedResults = 0;
+  let candidateCompanies = 0;
+  let failedSearches = 0;
+  let failedExtractionBatches = 0;
+  let failedVerifications = 0;
 
-    if (autoContacts && process.env.APOLLO_API_KEY) {
-      try {
-        const { default: enrichContact } = await import('./enrich-contact.mjs');
-        const contactResult = await internalJson(enrichContact, 'enrich-contact', { ...lead, maximumContacts });
-        lead.contacts = contactResult.contacts || [];
-        lead.selectedContactId = lead.contacts[0]?.id || null;
-      } catch (error) {
-        lead.contactError = error.message;
-        console.warn('Automatic contact discovery failed:', lead.company, error.message);
-      }
+  // Process each query as its own resumable batch. A timeout in one batch no longer
+  // cancels companies already saved by earlier batches.
+  for (let queryIndex = 0; queryIndex < campaign.queries.length && saved.length < maximumLeads; queryIndex++) {
+    const query = campaign.queries[queryIndex];
+    const progressBase = Math.round((queryIndex / Math.max(1, campaign.queries.length)) * 85);
+    await onProgress({
+      stage: 'searching',
+      progress: Math.min(90, 5 + progressBase),
+      message: `Searching batch ${queryIndex + 1} of ${campaign.queries.length} · ${saved.length} lead(s) saved…`
+    });
+
+    let rawResults = [];
+    try {
+      rawResults = await tavilySearch(query, resultsPerQuery);
+    } catch (error) {
+      failedSearches++;
+      console.warn('Search batch skipped:', query, error.message);
+      continue;
     }
 
-    if (autoEmail && lead.contacts?.length && process.env.OPENAI_API_KEY) {
+    const seenUrls = new Set();
+    rawResults = rawResults.filter(result => {
+      const url = cleanUrl(result.url || '');
+      if (!url || seenUrls.has(url)) return false;
+      seenUrls.add(url);
+      return true;
+    });
+    searchedResults += rawResults.length;
+    if (!rawResults.length) continue;
+
+    let candidates = [];
+    try {
+      candidates = await extractCompanies(rawResults, campaign);
+    } catch (error) {
+      failedExtractionBatches++;
+      console.warn('Company extraction batch skipped:', error.message);
+      continue;
+    }
+    candidateCompanies += candidates.length;
+
+    const remaining = maximumLeads - saved.length;
+    const candidatesToVerify = candidates.slice(0, Math.min(8, Math.max(3, remaining * 2)));
+    const verificationResults = await mapLimit(candidatesToVerify, 2, async candidate => {
+      try { return await verifyCompany(candidate, rawResults, campaign); }
+      catch (error) {
+        failedVerifications++;
+        console.warn('Company verification skipped:', candidate.company, error.message);
+        return null;
+      }
+    });
+
+    const bestByDomain = new Map();
+    for (const lead of verificationResults.filter(Boolean)) {
+      const domain = domainFromUrl(lead.website);
+      if (!domain || savedDomains.has(domain)) continue;
+      const current = bestByDomain.get(domain);
+      if (!current || current.score < lead.score) bestByDomain.set(domain, lead);
+    }
+
+    const verifiedBatch = [...bestByDomain.values()].sort((a, b) => b.score - a.score);
+    for (const lead of verifiedBatch) {
+      if (saved.length >= maximumLeads) break;
       try {
-        const { default: generateEmail } = await import('./generate-email.mjs');
-        const contact = lead.contacts.find(c=>c.id===lead.selectedContactId) || lead.contacts[0];
-        const emailResult = await internalJson(generateEmail, 'generate-email', { ...lead, contact });
-        lead.subject = emailResult.subject || '';
-        lead.emailBody = emailResult.body || '';
-        lead.draftId = emailResult.draftId || null;
-        lead.status = 'email_ready';
+        const persisted = await saveLead(lead);
+        const domain = domainFromUrl(persisted.website || lead.website);
+        if (domain) savedDomains.add(domain);
+        // Do not add the same existing company twice to this search response.
+        if (!saved.some(x => x.id === persisted.id)) saved.push(persisted);
+        await onProgress({
+          stage: 'saving',
+          progress: Math.min(95, 8 + progressBase),
+          message: `Saved ${saved.length} verified lead(s). Continuing search…`
+        });
       } catch (error) {
-        lead.emailError = error.message;
-        console.warn('Automatic email generation failed:', lead.company, error.message);
+        console.warn('Saving lead skipped:', lead.company, error.message);
       }
     }
-    saved.push(lead);
   }
 
-  await onProgress({ stage: 'complete', progress: 100, message: `Completed ${saved.length} lead(s).` });
+  const skipped = failedSearches + failedExtractionBatches + failedVerifications;
+  const summary = saved.length
+    ? `Completed with ${saved.length} verified lead(s)${skipped ? ` · ${skipped} slow/failed item(s) skipped` : ''}.`
+    : `Search completed with no new verified leads${skipped ? ` · ${skipped} slow/failed item(s) skipped` : ''}. Try another category or run again later.`;
+  await onProgress({ stage: 'complete', progress: 100, message: summary });
+
   return {
     campaign: campaign.label,
-    searchedResults: rawResults.length,
-    candidateCompanies: candidates.length,
+    searchedResults,
+    candidateCompanies,
     qualifiedLeads: saved.length,
-    contactsFound: saved.reduce((n,l)=>n+(l.contacts?.length||0),0),
-    emailsGenerated: saved.filter(l=>l.emailBody).length,
-    qualificationMode: 'OpenAI company extraction + official website verification',
+    contactsFound: 0,
+    emailsGenerated: 0,
+    skippedItems: skipped,
+    qualificationMode: 'Resumable OpenAI extraction + official website verification',
     persistent: supabaseConfig().configured,
     leads: saved
   };

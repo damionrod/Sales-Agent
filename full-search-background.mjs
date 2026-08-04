@@ -17,7 +17,7 @@ export default async request => {
       autoContacts:false,autoEmail:false,maximumContacts:body.maximumContacts||1,
       onProgress:async p=>update(jobId,p)
     });
-    await update(jobId,{status:'complete',stage:'complete',progress:100,message:`${result.qualifiedLeads} verified leads found. Select leads to find contacts next.`,
+    await update(jobId,{status:'complete',stage:'complete',progress:100,message:`${result.qualifiedLeads} verified leads found${result.skippedItems?` · ${result.skippedItems} slow/failed item(s) skipped`:''}. Select leads to find contacts next.`,
       searched_results:result.searchedResults,candidate_companies:result.candidateCompanies,qualified_leads:result.qualifiedLeads,
       contacts_found:result.contactsFound,emails_generated:result.emailsGenerated,completed_at:new Date().toISOString()});
   }catch(error){
