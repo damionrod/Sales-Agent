@@ -83,7 +83,10 @@ const BLOCKED_HOSTS = [
   'substack.com','prnewswire.com','businesswire.com','globenewswire.com','news.google.com',
   'techcrunch.com','forbes.com','reuters.com','bloomberg.com','statista.com',
   'researchandmarkets.com','marketsandmarkets.com','indeed.com','seek.com.au',
-  'glassdoor.com','crunchbase.com','g2.com','capterra.com'
+  'glassdoor.com','crunchbase.com','g2.com','capterra.com',
+  'computerweekly.com','editorandpublisher.com','itnews.com.au','arnnet.com.au',
+  'channelasia.tech','techday.com','techdayhq.com','newswire.com','telecompaper.com',
+  'capacitymedia.com','commsupdate.com','lightreading.com','rcrwireless.com'
 ];
 
 function blocked(url='') {
@@ -127,13 +130,40 @@ async function tavilySearch(query, maxResults = 6) {
   return Array.isArray(data.results) ? data.results : [];
 }
 
+function titleCaseDomain(host = '') {
+  const label = host.replace(/^www\./, '').split('.')[0].replace(/[-_]+/g, ' ').trim();
+  const aliases = {
+    tatacommunications: 'Tata Communications',
+    brightpattern: 'Bright Pattern',
+    cloudtalk: 'CloudTalk',
+    clicksend: 'ClickSend',
+    localiq: 'LocaliQ',
+    ibasis: 'iBASIS',
+    aatroxcommunications: 'Aatrox Communications'
+  };
+  const compact = label.replace(/\s+/g, '').toLowerCase();
+  if (aliases[compact]) return aliases[compact];
+  return label.split(' ').filter(Boolean).map(w => w.length <= 3 ? w.toUpperCase() : w[0].toUpperCase() + w.slice(1)).join(' ');
+}
+
+function looksLikeArticle(result = {}) {
+  const url = String(result.url || '').toLowerCase();
+  const title = String(result.title || '').toLowerCase();
+  const snippet = String(result.snippet || '').toLowerCase();
+  const articlePath = /\/(news|article|articles|blog|blogs|insights|press|press-release|resources|research|report|reports|story|stories|202[0-9]\/|20[0-9]{2}\/)/;
+  const articleTitle = /\b(how|why|what|guide|report|market|statistics|trends|launches|announces|acquires|snaps up|data sovereignty|transforming|help businesses|every caller)\b/;
+  const publisherText = /\b(editor|publisher|news|magazine|journal|media outlet|research report)\b/;
+  return articlePath.test(url) || articleTitle.test(title) || publisherText.test(snippet);
+}
+
 function fallbackCompanies(evidence, campaign, maximumLeads) {
+  // Conservative fallback: use the root domain as the company identity and reject article-like pages.
+  // It is better to return fewer genuine organisations than many headlines presented as companies.
   return evidence
-    .filter(x => !blocked(x.url))
+    .filter(x => !blocked(x.url) && !looksLikeArticle(x))
     .map(x => {
       const host = domainFromUrl(x.url);
-      const first = String(x.title || '').split(/[|–—:\-]/)[0].trim();
-      const company = first && first.length <= 90 ? first : host.split('.')[0].replace(/[-_]/g, ' ');
+      const company = titleCaseDomain(host);
       return {
         company,
         officialWebsite: officialRoot(x.url),
@@ -142,11 +172,12 @@ function fallbackCompanies(evidence, campaign, maximumLeads) {
         opportunity: campaign.label,
         products: [campaign.label],
         buyingSignal: x.snippet,
-        reason: 'Matched the selected telecom search profile. AI qualification was skipped because it took too long.',
-        score: 65,
+        reason: 'Matched the selected telecom search profile. Company identity was derived from its official domain because AI qualification was unavailable.',
+        score: 60,
         sourceUrl: x.url
       };
     })
+    .filter(x => x.company && x.company.length >= 2)
     .slice(0, maximumLeads);
 }
 
