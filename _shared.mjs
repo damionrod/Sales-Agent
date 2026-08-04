@@ -71,6 +71,27 @@ export function randomId(prefix = 'id') {
   return `${prefix}-${crypto.randomUUID()}`;
 }
 
+export function friendlyExternalError(value = '', fallback = 'The external service did not respond in time. Please try again.') {
+  const text = String(value || '');
+  const lower = text.toLowerCase();
+  const looksLikeHtml = lower.includes('<!doctype html') || lower.includes('<html') || lower.includes('inactivity timeout') || lower.includes('login redirect');
+  if (looksLikeHtml) return fallback;
+  return text.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 500) || fallback;
+}
+
+export async function fetchWithTimeout(url, options = {}, timeoutMs = 30000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: options.signal || controller.signal });
+  } catch (error) {
+    if (error?.name === 'AbortError') throw new Error('Request timed out.');
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function openAIJson({ system, user, schemaName = 'result' }) {
   const key = process.env.OPENAI_API_KEY;
   if (!key) throw new Error('OPENAI_API_KEY is not configured.');
