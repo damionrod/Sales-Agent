@@ -8,8 +8,6 @@ export default async (request) => {
     openai: Boolean(process.env.OPENAI_API_KEY),
     supabase: sb.configured,
     apollo: Boolean(process.env.APOLLO_API_KEY),
-    microsoft: Boolean(process.env.MICROSOFT_TENANT_ID && process.env.MICROSOFT_CLIENT_ID && process.env.MICROSOFT_CLIENT_SECRET && process.env.MICROSOFT_SENDER_EMAIL),
-    directSend: String(process.env.ALLOW_DIRECT_SEND).toLowerCase() === 'true',
     accessTokenRequired: Boolean(process.env.APP_ACCESS_TOKEN)
   }});
 };
