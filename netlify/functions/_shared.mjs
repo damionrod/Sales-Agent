@@ -104,21 +104,21 @@ export async function openAIJson({ system, user, schemaName = 'result' }) {
     ],
     response_format: { type: 'json_object' }
   };
-  let response = await fetch('https://api.openai.com/v1/chat/completions', {
+  let response = await fetchWithTimeout('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
     body: JSON.stringify(payload)
-  });
+  }, 18000);
   if (!response.ok && response.status === 400) {
     delete payload.response_format;
-    response = await fetch('https://api.openai.com/v1/chat/completions', {
+    response = await fetchWithTimeout('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
       body: JSON.stringify(payload)
-    });
+    }, 18000);
   }
   const text = await response.text();
-  if (!response.ok) throw new Error(`OpenAI ${response.status}: ${text.slice(0, 800)}`);
+  if (!response.ok) throw new Error(`OpenAI ${response.status}: ${friendlyExternalError(text, 'OpenAI did not respond in time.').slice(0, 500)}`);
   const data = JSON.parse(text);
   const content = data.choices?.[0]?.message?.content;
   if (!content) throw new Error('OpenAI returned no content.');

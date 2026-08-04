@@ -1,6 +1,6 @@
 import {
   corsJson, requirePost, checkAccess, cleanUrl, domainFromUrl,
-  openAIJson, supabaseConfig, supabaseRequest, mapCompanyRow
+  openAIJson, supabaseConfig, supabaseRequest, mapCompanyRow, friendlyExternalError
 } from './_shared.mjs';
 
 const CAMPAIGNS = {
@@ -98,7 +98,7 @@ function officialRoot(value='') {
   } catch { return ''; }
 }
 
-async function fetchWithTimeout(url, options, timeoutMs = 12000) {
+async function fetchWithTimeout(url, options, timeoutMs = 9000) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try { return await fetch(url, { ...options, signal: controller.signal }); }
@@ -120,11 +120,34 @@ async function tavilySearch(query, maxResults = 6) {
       include_raw_content: false,
       topic: 'general'
     })
-  }, 14000);
+  }, 10000);
   const text = await response.text();
-  if (!response.ok) throw new Error(`Tavily ${response.status}: ${text.slice(0,400)}`);
+  if (!response.ok) throw new Error(`Tavily ${response.status}: ${friendlyExternalError(text, 'Tavily search timed out.')}`);
   const data = JSON.parse(text);
   return Array.isArray(data.results) ? data.results : [];
+}
+
+function fallbackCompanies(evidence, campaign, maximumLeads) {
+  return evidence
+    .filter(x => !blocked(x.url))
+    .map(x => {
+      const host = domainFromUrl(x.url);
+      const first = String(x.title || '').split(/[|–—:\-]/)[0].trim();
+      const company = first && first.length <= 90 ? first : host.split('.')[0].replace(/[-_]/g, ' ');
+      return {
+        company,
+        officialWebsite: officialRoot(x.url),
+        country: 'Global',
+        industry: 'Telecommunications prospect',
+        opportunity: campaign.label,
+        products: [campaign.label],
+        buyingSignal: x.snippet,
+        reason: 'Matched the selected telecom search profile. AI qualification was skipped because it took too long.',
+        score: 65,
+        sourceUrl: x.url
+      };
+    })
+    .slice(0, maximumLeads);
 }
 
 async function extractCompaniesInOneCall(results, campaign, maximumLeads) {
@@ -135,25 +158,11 @@ async function extractCompaniesInOneCall(results, campaign, maximumLeads) {
     snippet: String(r.content || '').slice(0,900)
   }));
 
-  if (!process.env.OPENAI_API_KEY) {
-    return evidence
-      .filter(x => !blocked(x.url))
-      .slice(0, maximumLeads)
-      .map(x => ({
-        company: domainFromUrl(x.url).split('.')[0].replace(/[-_]/g,' '),
-        officialWebsite: officialRoot(x.url),
-        country: 'Global',
-        industry: 'Telecommunications prospect',
-        opportunity: campaign.label,
-        products: [campaign.label],
-        buyingSignal: x.snippet,
-        reason: 'Matched the selected telecom search profile.',
-        score: 68,
-        sourceUrl: x.url
-      }));
-  }
+  if (!process.env.OPENAI_API_KEY) return fallbackCompanies(evidence, campaign, maximumLeads);
 
-  const out = await openAIJson({
+  let out;
+  try {
+    out = await openAIJson({
     schemaName: 'fast company extraction',
     system: `You are a fast, conservative B2B telecom prospect analyst for Symbio Wholesale.
 Campaign: ${campaign.label}.
@@ -163,9 +172,15 @@ Use the likely official company website from the evidence. Do not perform extra 
 A company must plausibly buy one or more of: AU/NZ/SG DIDs, voice termination, Australian mobile numbers, A2P/two-way SMS, MVNO, eSIM, IoT SIM, DIA, NBN, OptiComm, IP transit, backhaul, dark fibre or NuWave BYOC.
 Return at most ${maximumLeads} companies and JSON only:
 {"companies":[{"company":"","officialWebsite":"https://example.com/","country":"","industry":"","opportunity":"","products":[""],"buyingSignal":"","reason":"","score":75,"sourceUrl":""}]}`,
-    user: JSON.stringify(evidence)
-  });
-  return Array.isArray(out.companies) ? out.companies : [];
+      user: JSON.stringify(evidence)
+    });
+  } catch (error) {
+    console.warn('OpenAI qualification fallback:', error.message);
+    return fallbackCompanies(evidence, campaign, maximumLeads);
+  }
+  return Array.isArray(out.companies) && out.companies.length
+    ? out.companies
+    : fallbackCompanies(evidence, campaign, maximumLeads);
 }
 
 async function saveLead(candidate, campaign) {
@@ -221,8 +236,8 @@ export default async request => {
   try {
     const body = await request.json().catch(() => ({}));
     const campaign = CAMPAIGNS[body.campaign] || CAMPAIGNS.voice;
-    const maximumLeads = Math.max(1, Math.min(15, Number(body.maximumLeads) || 10));
-    const resultsPerQuery = Math.max(3, Math.min(8, Number(body.resultsPerQuery) || 6));
+    const maximumLeads = Math.max(1, Math.min(10, Number(body.maximumLeads) || 8));
+    const resultsPerQuery = Math.max(3, Math.min(6, Number(body.resultsPerQuery) || 5));
 
     const settled = await Promise.allSettled(campaign.queries.map(q => tavilySearch(q, resultsPerQuery)));
     const raw = settled.flatMap(x => x.status === 'fulfilled' ? x.value : []);
@@ -243,11 +258,13 @@ export default async request => {
       if (!deduped.has(domain) || Number(deduped.get(domain).score || 0) < Number(c.score || 0)) deduped.set(domain, c);
     }
 
-    const saved = [];
-    for (const candidate of [...deduped.values()].slice(0, maximumLeads)) {
-      try { const row = await saveLead(candidate, campaign); if (row) saved.push(row); }
-      catch (error) { console.warn('Lead save skipped:', error.message); }
-    }
+    const saveResults = await Promise.allSettled(
+      [...deduped.values()].slice(0, maximumLeads).map(candidate => saveLead(candidate, campaign))
+    );
+    const saved = saveResults
+      .filter(x => x.status === 'fulfilled' && x.value)
+      .map(x => x.value);
+    saveResults.filter(x => x.status === 'rejected').forEach(x => console.warn('Lead save skipped:', x.reason?.message));
 
     return corsJson({
       ok: true, campaign: campaign.label, searchedResults: results.length,
@@ -257,7 +274,7 @@ export default async request => {
     });
   } catch (error) {
     console.error(error);
-    const message = error?.name === 'AbortError' ? 'The search provider took too long. Please retry.' : (error.message || 'Lead discovery failed.');
+    const message = friendlyExternalError(error?.message || '', 'The search provider took too long. Please retry.');
     return corsJson({ ok: false, error: message }, 500);
   }
 };
